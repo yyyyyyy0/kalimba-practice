@@ -1,0 +1,11 @@
+{
+  "name": "kalimba-practice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "check": "node tools/check-songs.mjs",
+    "start": "python3 -m http.server 8000"
+  }
+}

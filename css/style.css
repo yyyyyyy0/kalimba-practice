@@ -1,0 +1,605 @@
+:root {
+  --bg: #14171d;
+  --panel: #1b1f27;
+  --panel-2: #20252e;
+  --border: #2c333f;
+  --text: #e6e9ef;
+  --muted: #8a93a3;
+  --accent: #7fb7b0;
+  --accent-strong: #5fa39b;
+  --accent-ink: #0f1a19;
+  --gold: #f2d98c;
+  --good: #8fe3b0;
+  --warn: #f0cf7a;
+  --bad: #ff8a8a;
+  --radius: 12px;
+  --gutter: 16px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+h2 {
+  margin: 8px 0 12px;
+  font-size: 1.25rem;
+}
+
+h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+.sim-banner {
+  padding: 4px var(--gutter);
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: #4a3a14;
+  color: var(--gold);
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px var(--gutter);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+}
+
+.nav {
+  display: flex;
+  gap: 6px;
+}
+
+.nav-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.nav-btn[aria-current='true'] {
+  border-color: var(--accent-strong);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px var(--gutter) 48px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.panel {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.status {
+  min-height: 1.4em;
+  margin: 8px 0;
+  color: var(--muted);
+}
+
+.status.error {
+  color: var(--bad);
+}
+
+.status.ok {
+  color: var(--good);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.actions .btn {
+  flex: 1 1 140px;
+}
+
+.btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.primary {
+  border-color: var(--accent-strong);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.btn.small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 0.875rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* 曲リスト */
+.song-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.song {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.song.selected {
+  border-color: var(--accent);
+  background: #1d2a2a;
+}
+
+.song-title {
+  font-weight: 700;
+}
+
+.song-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.song-credit,
+.song-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.badge {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 0.75rem;
+}
+
+.badge.kind-drill {
+  color: var(--accent);
+}
+
+.level {
+  color: var(--gold);
+  letter-spacing: 0.08em;
+}
+
+/* フォーム */
+.options {
+  display: grid;
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.field select,
+.field input[type='number'] {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+}
+
+.check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.range input {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.value {
+  min-width: 4.5em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ゲーム画面 */
+.hud {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 4px 0 8px;
+}
+
+.hud-item {
+  display: grid;
+  line-height: 1.2;
+}
+
+.hud-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.hud-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud .btn {
+  margin-left: auto;
+}
+
+.progress {
+  height: 4px;
+  margin-bottom: 8px;
+  border-radius: 2px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+}
+
+.canvas-wrap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  touch-action: none;
+}
+
+/* 結果 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.stat-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat.perfect .stat-value {
+  color: var(--gold);
+}
+
+.stat.great .stat-value {
+  color: var(--good);
+}
+
+.stat.good .stat-value {
+  color: #8fc6ff;
+}
+
+.stat.miss .stat-value {
+  color: var(--bad);
+}
+
+.plain {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+/* チューナー */
+.tuner-main {
+  text-align: center;
+}
+
+.tuner-name {
+  font-size: 4.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.tuner-en {
+  min-height: 1.5em;
+  color: var(--muted);
+  font-size: 1.2rem;
+}
+
+.tuner-hz {
+  margin-bottom: 14px;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cent-meter {
+  position: relative;
+  height: 44px;
+  margin: 0 8px 4px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.cent-meter .zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 45%;
+  width: 10%;
+  background: rgba(143, 227, 176, 0.22);
+}
+
+.needle {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 50%;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--muted);
+  transition: left 80ms linear;
+}
+
+.needle.good {
+  background: var(--good);
+}
+
+.needle.warn {
+  background: var(--warn);
+}
+
+.needle.bad {
+  background: var(--bad);
+}
+
+.needle.idle {
+  opacity: 0.4;
+}
+
+.tick {
+  position: absolute;
+  bottom: -20px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.t-neg {
+  left: 0;
+}
+
+.t-zero {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.t-pos {
+  right: 0;
+}
+
+.tuner-cents {
+  min-height: 1.6em;
+  margin-top: 24px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tuner-nearest {
+  min-height: 1.5em;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.input-level {
+  height: 8px;
+  margin-top: 14px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.level-fill {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+}
+
+.check-table,
+.tine-list {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.check-table li,
+.tine-list li {
+  display: grid;
+  gap: 0;
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.check-table .deg {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.check-table .sol {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.check-table li.good {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.check-table li.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.check-table li.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.tine-list li {
+  color: var(--muted);
+}
+
+.tine-list li.done {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+@media (max-width: 520px) {
+  :root {
+    --gutter: 14px;
+  }
+
+  .tuner-name {
+    font-size: 3.6rem;
+  }
+
+  .stats,
+  .check-table,
+  .tine-list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .hud {
+    gap: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .needle {
+    transition: none;
+  }
+}

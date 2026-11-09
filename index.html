@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>カリンバ練習</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="sim-banner" class="sim-banner" hidden></div>
+  <header class="topbar">
+    <h1>カリンバ練習</h1>
+    <nav class="nav" aria-label="画面の切り替え">
+      <button type="button" class="nav-btn" data-screen="game">練習</button>
+      <button type="button" class="nav-btn" data-screen="tuner">チューナー</button>
+      <button type="button" class="nav-btn" data-screen="settings">設定</button>
+    </nav>
+  </header>
+  <main class="main">
+    <section id="screen-game" class="screen"></section>
+    <section id="screen-tuner" class="screen" hidden></section>
+    <section id="screen-settings" class="screen" hidden></section>
+  </main>
+  <noscript>このアプリは JavaScript が必要です。</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

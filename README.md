@@ -66,6 +66,18 @@ npm run check       # 譜面の検証 (範囲・小節の拍数)
 
 Node 22 は `node --test test/` のディレクトリ指定をモジュールとして解決するため、`test/index.js` から全テストを読み込んでいます。
 
+## 公開 (Cloudflare Pages)
+
+https://kalimba-practice.pages.dev/ で公開しています。HTTPS なので、スマホのブラウザでもマイクが使えます。
+
+更新するときは、変更をコミットしてから次を実行します。`wrangler` (Cloudflare の CLI) にログインしている必要があります。
+
+```sh
+npm run deploy
+```
+
+`tools/deploy.sh` は、コミット済みの `index.html`・`css/`・`js/` だけを取り出して、Pages のプロジェクト `kalimba-practice` の本番 (main) に上げます。テストや仕様書は上げません。未コミットの変更があると止まります。
+
 ## 制限
 
 - 同時に複数の歯を弾く (和音) ことは想定していません。1 回の発音は 1 つの音高として扱います。

@@ -17,7 +17,7 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 out=$(mktemp -d "${TMPDIR:-/tmp}/kalimba-pages.XXXXXX")
-git archive HEAD index.html css js | tar -x -C "$out"
+git archive HEAD index.html _headers css js | tar -x -C "$out"
 
 wrangler pages deploy "$out" \
   --project-name "$PROJECT" \

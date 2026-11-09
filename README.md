@@ -79,7 +79,7 @@ https://kalimba-practice.pages.dev/ で公開しています。HTTPS なので�
 npm run deploy
 ```
 
-`tools/deploy.sh` は、コミット済みの `index.html`・`css/`・`js/` だけを取り出して、Pages のプロジェクト `kalimba-practice` の本番 (main) に上げます。テストや仕様書は上げません。未コミットの変更があると止まります。
+`tools/deploy.sh` は、コミット済みの `index.html`・`_headers`・`css/`・`js/` だけを取り出して、Pages のプロジェクト `kalimba-practice` の本番 (main) に上げます。テストや仕様書は上げません。未コミットの変更があると止まります。 `_headers` は全ファイルを `no-store` にします。ES modules の新旧が混ざると起動しないためです (更新後に、ブラウザが古いモジュールを使い続けて壊れたことがある)。
 
 ## 制限
 

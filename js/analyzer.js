@@ -86,6 +86,7 @@ function rmsDb(samples) {
 export class Analyzer {
   constructor({ sampleRate, getPreset, getMatchOpts = () => ({}), sensitivity = DEFAULT_SENSITIVITY, tuner = true }) {
     const factor = Math.max(1, Math.floor(sampleRate / MIN_ANALYSIS_RATE));
+    this.inputRate = sampleRate;
     this.decimator = factor > 1 ? new Decimator(factor) : null;
     this.filterDelay = this.decimator ? this.decimator.delay / sampleRate : 0;
     this.sampleRate = sampleRate / factor;
@@ -138,7 +139,14 @@ export class Analyzer {
   }
 
   push(samples, startTime) {
-    if (this.t0 === null) this.t0 = startTime;
+    if (this.t0 === null) {
+      this.t0 = startTime;
+      this.inputSamples = 0;
+    }
+    // 音声スレッドが処理を飛ばすとブロックの時刻が飛ぶ。サンプル数だけで数えると以後の時刻がずっとずれるので、基準を合わせ直す。
+    const drift = startTime - (this.t0 + this.inputSamples / this.inputRate);
+    if (Math.abs(drift) > 1 / this.inputRate) this.t0 += drift;
+    this.inputSamples += samples.length;
     if (this.decimator) samples = this.decimator.process(samples);
     let i = 0;
     while (i < samples.length) {

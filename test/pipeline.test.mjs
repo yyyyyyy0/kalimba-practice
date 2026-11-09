@@ -222,3 +222,22 @@ test('analyzer: チューナー読み取りは約 20ms ごとで、持続音の�
   assert.ok(silent.every((r) => r.freq === null));
   assert.ok(levels.length > 0 && levels[0].db < -60);
 });
+
+// 音声スレッドが処理を飛ばすと、AudioWorklet から届くブロックの時刻が飛ぶ。サンプル数だけで時刻を数えると以後ずっと早くずれる。
+test('analyzer: 届かなかったブロックがあっても、発音時刻はブロックの時刻に合わせて ±15ms 以内', () => {
+  const sampleRate = 48000;
+  const preset = makePreset('c4', 440);
+  const strikes = [1.5, 2.0, 2.5, 3.0].map((time, i) => ({ time, freq: preset.freqs[i * 2] }));
+  const audio = renderStrikes(strikes, sampleRate, 4);
+  const analyzer = new Analyzer({ sampleRate, getPreset: () => preset, tuner: false });
+  const events = [];
+  analyzer.onPluck((e) => events.push(e));
+  const block = 128;
+  const gap = [Math.round(0.6 * sampleRate), Math.round(0.735 * sampleRate)];
+  for (let i = 0; i + block <= audio.length; i += block) {
+    if (i >= gap[0] && i < gap[1]) continue;
+    analyzer.push(audio.subarray(i, i + block), i / sampleRate);
+  }
+  assert.equal(events.length, strikes.length);
+  events.forEach((e, i) => assert.ok(Math.abs(e.time - strikes[i].time) <= 0.015, `#${i}: ${(e.time - strikes[i].time) * 1000} ms`));
+});

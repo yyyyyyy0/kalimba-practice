@@ -6,6 +6,12 @@ import { renderClick, renderKalimba } from './synth.js';
 
 export const SIM_KINDS = ['autoplay', 'wrong', 'silence'];
 
+// 疑似マイクの音は、お手本の音 (2.5 秒) より長く鳴らす。低い歯は時定数が 2.5 秒なので、2.5 秒で切ると
+// まだ −9 dB ある残響が消え、解析器は「鳴っていた歯が急に止まった」ことを新しい打鍵と取り違える。実機の歯は途中で切れない。
+const SIM_TONE_SECONDS = 10;
+// 同じ歯を打ち直すと、指が歯に触れて前の振動は止まり、新しい振動に置き換わる。疑似マイクも前の音をこの秒数で絞って止める。
+const SIM_DAMP_SECONDS = 0.004;
+
 // 画面を離れて close() された後に終わった open。呼び出し側は何も表示せずに抜ける。
 export class StaleOpen extends Error {}
 
@@ -40,6 +46,7 @@ export class Listener {
     this.ctx = null;
     this.analyzer = null;
     this.capture = null;
+    this.simTines = new Map();
     this.stream = null;
     this.micSource = null;
     this.frameHandlers = new Set();
@@ -209,8 +216,34 @@ export class Listener {
   }
 
   // マイクの代わりに解析器の入力へ直接つなぐ (スピーカーには出さない)。
-  simPluck(freq, when) {
-    return this.play(this.toneBuffer(freq), when, this.capture);
+  // 同じ歯の前の打鍵は、この打鍵の時刻から止める (足し算で重ねない)。
+  simPluck(freq, when, gain = 1) {
+    const key = freq.toFixed(3);
+    const buffer = this.bufferFor(`sim:${key}`, (sr) => renderKalimba(freq, sr, { duration: SIM_TONE_SECONDS }));
+    const envelope = this.ctx.createGain();
+    envelope.gain.value = 1;
+    envelope.connect(this.capture);
+    const src = this.play(buffer, when, envelope, gain);
+    const prev = this.simTines.get(key);
+    if (prev && prev.src.scheduledAt < src.scheduledAt) {
+      prev.envelope.gain.setValueAtTime(1, src.scheduledAt);
+      prev.envelope.gain.linearRampToValueAtTime(0, src.scheduledAt + SIM_DAMP_SECONDS);
+      prev.src.stop(src.scheduledAt + SIM_DAMP_SECONDS + 0.01);
+    }
+    this.simTines.set(key, { src, envelope });
+    return src;
+  }
+
+  // 疑似マイクで鳴らし中の音を短く絞って止める。中断や「もう一度」のあと、前の残響が次の演奏に重ならないようにする。
+  dampSim() {
+    const now = this.ctx?.currentTime ?? 0;
+    for (const { src, envelope } of this.simTines.values()) {
+      envelope.gain.cancelScheduledValues(now);
+      envelope.gain.setValueAtTime(envelope.gain.value, now);
+      envelope.gain.linearRampToValueAtTime(0, now + SIM_DAMP_SECONDS);
+      src.stop(now + SIM_DAMP_SECONDS + 0.01);
+    }
+    this.simTines.clear();
   }
 
   click(when, accent = false) {

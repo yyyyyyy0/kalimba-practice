@@ -3,9 +3,10 @@
 import { StaleOpen } from './audio.js';
 import { clear, el } from './dom.js';
 import { WINDOWS, createJudge } from './judge.js';
-import { buildChart } from './score.js';
+import { MAX_LEVEL, buildChart, chordsOf, hasChords } from './score.js';
 import { SCROLLS, SPEEDS, presetFromSettings } from './settings.js';
 import { SONGS } from './songs.js';
+import { mulberry32 } from './synth.js';
 import { DEGREE_LABELS, LAYOUTS, SOLFEGE, freqToMidi, noteName } from './tuning.js';
 
 const COUNT_IN_LEAD = 0.5;
@@ -15,6 +16,9 @@ const DEMO_TAIL = 1.5;
 const SIM_WAIT_DELAY = 0.4;
 const FLASH_SECONDS = 0.28;
 const POPUP_SECONDS = 0.75;
+const STRUM_DEFAULT_MS = 25;
+const STRUM_LEVEL_DB = 3;
+const KIND_ORDER = { drill: 0, song: 1 };
 
 // css/style.css の変数と同じ値。Canvas は CSS 変数を読めないので写している。
 const PALETTE = {
@@ -40,7 +44,10 @@ function degreeColor(degree, alpha = 1) {
 
 const wrongDegree = (d) => (d === 8 ? 7 : d + 1);
 const byId = (id) => SONGS.find((s) => s.id === id);
-const stars = (n) => '★'.repeat(n) + '☆'.repeat(Math.max(0, 3 - n));
+const stars = (n) => '★'.repeat(n) + '☆'.repeat(Math.max(0, MAX_LEVEL - n));
+// 曲一覧は、ドリル → 曲の順で、その中は難易度の昇順 (同じなら譜面データの順)。
+const LISTED = [...SONGS].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.level - b.level);
+const CHORD_SONGS = new Set(SONGS.filter(hasChords).map((s) => s.id));
 
 export function createGame({ root, store, listener, params }) {
   const kalimba = (window.__kalimba = { state: 'idle', result: null, events: [] });
@@ -54,6 +61,8 @@ export function createGame({ root, store, listener, params }) {
     mode: params.get('mode') === 'wait' || params.get('mode') === 'timed' ? params.get('mode') : store.get().mode,
   };
   if (!(options.speed >= 0.5 && options.speed <= 1.25)) options.speed = 1;
+  const strumParam = params.get('strum');
+  const strumMs = strumParam !== null && Number(strumParam) >= 0 ? Number(strumParam) : STRUM_DEFAULT_MS;
 
   let run = null;
   let starting = false;
@@ -115,7 +124,7 @@ export function createGame({ root, store, listener, params }) {
     ui.demoBtn = el('button', { id: 'demo-btn', class: 'btn', type: 'button', onclick: () => begin({ demo: true }) }, 'お手本を見る');
 
     const list = el('ul', { class: 'song-list' });
-    for (const song of SONGS) {
+    for (const song of LISTED) {
       const note = song.note && el('span', { class: 'song-note' }, `編曲メモ: ${song.note}`);
       const btn = el(
         'button',
@@ -125,6 +134,7 @@ export function createGame({ root, store, listener, params }) {
           el('span', { class: `badge kind-${song.kind}` }, song.kind === 'drill' ? '練習' : '曲'),
           el('span', { class: 'level', title: '難易度' }, stars(song.level)),
           el('span', {}, `♩=${song.bpm}`),
+          CHORD_SONGS.has(song.id) && el('span', { class: 'badge chord' }, '和音あり'),
           el('span', { class: 'best' }, bestLabel(song))),
         el('span', { class: 'song-credit' }, song.credit),
         note,
@@ -158,6 +168,15 @@ export function createGame({ root, store, listener, params }) {
   }
 
   const freqOf = (preset, degree) => preset.freqs[degree - 1];
+
+  // 疑似マイクの 1 音。和音の歯は、人がストラムしたときの近似として 0〜strumMs のずらしと ±3dB の強さの揺れを付ける。
+  function simStrike(note, when) {
+    const degree = listener.sim === 'wrong' ? wrongDegree(note.degree) : note.degree;
+    const chord = note.chord !== null && note.chord !== undefined;
+    const delay = chord ? (run.rand() * strumMs) / 1000 : 0;
+    const gain = chord ? 10 ** (((run.rand() * 2 - 1) * STRUM_LEVEL_DB) / 20) : 1;
+    return listener.simPluck(freqOf(run.preset, degree), when + delay, gain);
+  }
 
   async function begin({ demo }) {
     if (run || starting) return;
@@ -194,13 +213,15 @@ export function createGame({ root, store, listener, params }) {
       lookahead: settings.scroll,
       order: LAYOUTS[settings.layout].order,
       events: [],
+      chords: chordsOf(chart.notes),
+      rand: mulberry32(1),
       clickTimes: [],
       sources: [],
       popups: [],
       lit: new Map(),
       unsubs: [],
       holdSince: null,
-      simServed: -1,
+      simServed: null,
       raf: 0,
     };
     kalimba.events = run.events;
@@ -221,10 +242,7 @@ export function createGame({ root, store, listener, params }) {
     } else {
       run.unsubs.push(listener.analyzer.onPluck(onPluck), listener.onFrame(onFrame));
       if (mode === 'timed' && (listener.sim === 'autoplay' || listener.sim === 'wrong')) {
-        for (const n of chart.notes) {
-          const d = listener.sim === 'wrong' ? wrongDegree(n.degree) : n.degree;
-          run.sources.push(listener.simPluck(freqOf(preset, d), origin + n.time));
-        }
+        for (const n of chart.notes) run.sources.push(simStrike(n, origin + n.time));
       }
     }
     showView('play');
@@ -238,6 +256,7 @@ export function createGame({ root, store, listener, params }) {
     // 鳴り始めた音を途中で切ると波形が途切れてクリックになり、疑似マイクでは発音と誤検出される。まだ始まっていない音だけ止める。
     const now = listener.ctx.currentTime;
     for (const s of run.sources) if (s.scheduledAt > now) s.stop();
+    if (listener.sim) listener.dampSim();
   }
 
   function abort() {
@@ -280,27 +299,52 @@ export function createGame({ root, store, listener, params }) {
     const t = gameTime(event.time - run.latency);
     if (run.clickTimes.some((c) => Math.abs(event.time - run.latency - c) <= CLICK_IGNORE)) return;
     if (t < -WINDOWS.good) return;
-    const result = run.judge.onPluck({ time: t, degree: event.degree });
     const now = listener.ctx.currentTime;
-    if (event.degree === null) {
+    if (event.tines.length === 0) {
       popup('音程が合いません', PALETTE.muted, now);
       return;
     }
-    if (result.kind === 'hit') {
-      popup(result.judgement.toUpperCase(), JUDGEMENT_COLOR[result.judgement], now);
-      light(result.note.degree, JUDGEMENT_COLOR[result.judgement], now);
-    } else if (result.kind === 'wrong') {
-      popup(`${SOLFEGE[event.degree - 1]} を弾いた`, PALETTE.miss, now, true);
-      light(event.degree, PALETTE.miss, now);
-    }
+    showResults(run.judge.onPluck({ time: t, degrees: event.tines.map((x) => x.degree) }), now);
     updateHud();
+  }
+
+  // 判定の表示は和音ごとに 1 つ。全部当たれば最も悪い判定、欠けていれば「和音: 2/3」。
+  function chordPopup(status, now) {
+    if (status.hit === status.total) popup(status.worst.toUpperCase(), JUDGEMENT_COLOR[status.worst], now);
+    else popup(`和音: ${status.hit}/${status.total}`, PALETTE.good, now);
+  }
+
+  function showResults(results, now) {
+    const shown = new Set();
+    let wrongShown = false;
+    for (const r of results) {
+      if (r.kind === 'hit') {
+        light(r.note.degree, JUDGEMENT_COLOR[r.judgement], now);
+        if (!r.chord) popup(r.judgement.toUpperCase(), JUDGEMENT_COLOR[r.judgement], now);
+        else if (!shown.has(r.chord.id)) {
+          shown.add(r.chord.id);
+          chordPopup(r.chord, now);
+        }
+      } else if (r.kind === 'wrong') {
+        light(r.degree, PALETTE.miss, now);
+        if (!wrongShown) popup(`${SOLFEGE[r.degree - 1]} を弾いた`, PALETTE.miss, now, true);
+        wrongShown = true;
+      }
+    }
   }
 
   function onFrame(endCtxTime) {
     if (!run) return;
     const now = gameTime(endCtxTime - run.latency);
-    if (run.judge.tick(now).length > 0) {
-      popup('MISS', PALETTE.miss, listener.ctx.currentTime);
+    const missed = run.judge.tick(now);
+    if (missed.length > 0) {
+      const at = listener.ctx.currentTime;
+      const chordIds = new Set(missed.filter((n) => n.chord !== null && n.chord !== undefined).map((n) => n.chord));
+      for (const id of chordIds) {
+        const status = run.judge.chordStatus(id);
+        popup(status.hit > 0 ? `和音: ${status.hit}/${status.total}` : 'MISS', status.hit > 0 ? PALETTE.good : PALETTE.miss, at);
+      }
+      if (missed.some((n) => n.chord === null || n.chord === undefined)) popup('MISS', PALETTE.miss, at);
       updateHud();
     }
     const notes = run.chart.notes;
@@ -334,10 +378,11 @@ export function createGame({ root, store, listener, params }) {
       run.holdSince = null;
     }
     const sim = listener.sim;
-    if (!run.demo && (sim === 'autoplay' || sim === 'wrong') && run.holdSince !== null && ctxNow - run.holdSince >= SIM_WAIT_DELAY && run.simServed !== next.index) {
-      run.simServed = next.index;
-      const d = sim === 'wrong' ? wrongDegree(next.degree) : next.degree;
-      run.sources.push(listener.simPluck(freqOf(run.preset, d), ctxNow + 0.05));
+    const key = next.chord === null || next.chord === undefined ? `n${next.index}` : `c${next.chord}`;
+    if (!run.demo && (sim === 'autoplay' || sim === 'wrong') && run.holdSince !== null && ctxNow - run.holdSince >= SIM_WAIT_DELAY && run.simServed !== key) {
+      run.simServed = key;
+      const group = key[0] === 'c' ? run.chords.find((c) => c[0].chord === next.chord) : [next];
+      for (const note of group) if (note.state === 'pending') run.sources.push(simStrike(note, ctxNow + 0.05));
     }
   }
 
@@ -406,6 +451,17 @@ export function createGame({ root, store, listener, params }) {
     g.globalAlpha = 1;
 
     const noteH = Math.max(12, Math.min(18, laneW * 0.4));
+    // 和音は同じ高さのノーツを横棒でつなぎ、どの歯を同時に弾くかを示す。
+    g.fillStyle = PALETTE.text;
+    g.globalAlpha = 0.55;
+    for (const group of run.chords) {
+      if (group.every((n) => n.state === 'hit')) continue;
+      const y = judgeY - (group[0].time - t) * pps;
+      if (y < -noteH || y > h + noteH) continue;
+      const xs = group.map((n) => laneX(n.degree) + laneW / 2);
+      g.fillRect(Math.min(...xs), y - 2, Math.max(...xs) - Math.min(...xs), 4);
+    }
+    g.globalAlpha = 1;
     for (const note of run.chart.notes) {
       if (note.state === 'hit') continue;
       const y = judgeY - (note.time - t) * pps;
@@ -516,6 +572,7 @@ export function createGame({ root, store, listener, params }) {
       el('div', { class: 'stats' },
         stat('精度', `${Math.round(r.accuracy * 100)}%`), stat('最大コンボ', r.maxCombo),
         stat('スコア', r.score.toLocaleString('ja-JP')), stat('誤った音', r.wrong)),
+      r.chords.total > 0 && el('p', { id: 'chord-result', class: 'chord-result' }, `和音 ${r.chords.complete} / ${r.chords.total} 成功`),
       el('section', { class: 'panel' },
         el('h3', {}, '苦手な歯'),
         trouble.length === 0

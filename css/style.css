@@ -241,6 +241,16 @@ p {
   color: var(--accent);
 }
 
+.badge.chord {
+  color: var(--gold);
+}
+
+.chord-result {
+  margin: 10px 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
 .level {
   color: var(--gold);
   letter-spacing: 0.08em;

@@ -1,18 +1,21 @@
 // カリンバ風の合成音。Float32Array を返すだけで、ブラウザ API には触れない。
 
+import { SECOND_MODE_RATIO } from './tuning.js';
+
 const OUTPUT_GAIN = 0.6;
 const CLICK_SECONDS = 0.003;
 const CLICK_AMP = 0.3;
+const CLICK_RATE = 48000;
 const TAIL_FADE_SECONDS = 0.15;
 
 // 片持ち梁の振動モードは基音の整数倍にならない。
 const PARTIALS = [
   { ratio: 1, amp: 1, tau: null },
-  { ratio: 6.27, amp: 0.25, tau: 0.12 },
+  { ratio: SECOND_MODE_RATIO, amp: 0.25, tau: 0.12 },
   { ratio: 17.55, amp: 0.08, tau: 0.04 },
 ];
 
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -49,15 +52,26 @@ export function renderKalimba(freq, sampleRate, { duration = 2.5, velocity = 1, 
   }
 
   // 爪や指が歯を弾く音。白色雑音の 2 階差分で高域に寄せ、RMS を 1 に揃えてから振幅を掛ける。
+  // 雑音は CLICK_RATE 以下の標本化周波数で作って線形補間する。サンプルごとの 2 階差分は標本化周波数が高いほど
+  // 最高域に寄るので、192kHz で直接作ると 21.6kHz 以下 (解析が使う帯域) の成分が 48kHz のときより約 20dB 少なくなり、
+  // 発音検出の立ち上がりが閾値の近くまで下がってしまう。実際の爪の音は帯域が標本化周波数で変わらない。
   const rand = mulberry32(seed);
   const clickLen = Math.min(length, Math.round(CLICK_SECONDS * sampleRate));
+  const clickRate = Math.min(sampleRate, CLICK_RATE);
+  const noiseLen = Math.min(length, Math.round(CLICK_SECONDS * clickRate));
+  const noise = new Float64Array(noiseLen);
   let n1 = 0;
   let n2 = 0;
-  for (let i = 0; i < clickLen; i++) {
+  for (let i = 0; i < noiseLen; i++) {
     const n0 = rand() * 2 - 1;
-    const hp = (n0 - 2 * n1 + n2) / Math.sqrt(2);
+    noise[i] = (n0 - 2 * n1 + n2) / Math.sqrt(2);
     n2 = n1;
     n1 = n0;
+  }
+  for (let i = 0; i < clickLen; i++) {
+    const pos = (i * clickRate) / sampleRate;
+    const j = Math.min(noiseLen - 1, Math.floor(pos));
+    const hp = noise[j] + (noise[Math.min(noiseLen - 1, j + 1)] - noise[j]) * (pos - j);
     out[i] += CLICK_AMP * hp * (1 - i / clickLen);
   }
 

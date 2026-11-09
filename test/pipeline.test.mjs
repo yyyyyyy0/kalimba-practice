@@ -2,20 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Analyzer } from '../js/analyzer.js';
 import { createJudge } from '../js/judge.js';
-import { buildChart } from '../js/score.js';
+import { buildChart, hasChords } from '../js/score.js';
 import { SONGS } from '../js/songs.js';
 import { centsBetween, makePreset } from '../js/tuning.js';
-import { feed, renderStrikes } from './helpers.mjs';
+import { dbToGain, feed, renderStrikes, seededRandom } from './helpers.mjs';
 
 const LEAD = 1;
 const MAX_DEGREE = 8;
+const STRUM_MS = 25;
+
+const hash = (text) => [...text].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 7);
+const onsetsOf = (chart) => new Set(chart.notes.map((n) => (n.chord === null ? `n${n.index}` : `c${n.chord}`))).size;
 
 // 譜面どおりに合成した 1 本の音声を Analyzer へ流し、同じ時計で judge に渡す。
-function play(song, { sampleRate, preset, shift = 0, mode = 'timed', chunk }) {
+// 和音の歯は、人のストラムの近似として 0〜strumMs のずらしと ±3dB の強さの揺れを付ける。
+function play(song, { sampleRate, preset, shift = 0, mode = 'timed', chunk, strumMs = STRUM_MS }) {
   const chart = buildChart(song);
+  const rand = seededRandom(hash(song.id));
   const strikes = chart.notes.map((n) => {
     const degree = shift === 0 ? n.degree : n.degree === MAX_DEGREE ? MAX_DEGREE - 1 : n.degree + shift;
-    return { time: LEAD + n.time, freq: preset.freqs[degree - 1] };
+    const chord = n.chord !== null;
+    return {
+      time: LEAD + n.time + (chord ? (rand() * strumMs) / 1000 : 0),
+      freq: preset.freqs[degree - 1],
+      velocity: chord ? dbToGain((rand() * 2 - 1) * 3) : 1,
+    };
   });
   const audio = renderStrikes(strikes, sampleRate, LEAD + chart.endTime + 3);
   const judge = createJudge({ notes: chart.notes, mode, octaveFree: false });
@@ -23,7 +34,7 @@ function play(song, { sampleRate, preset, shift = 0, mode = 'timed', chunk }) {
   const events = [];
   analyzer.onPluck((e) => {
     events.push(e);
-    judge.onPluck({ time: e.time - LEAD, degree: e.degree });
+    if (e.tines.length > 0) judge.onPluck({ time: e.time - LEAD, degrees: e.tines.map((t) => t.degree) });
   });
   feed(
     audio,
@@ -37,48 +48,70 @@ function play(song, { sampleRate, preset, shift = 0, mode = 'timed', chunk }) {
   return { chart, judge, events };
 }
 
-for (const [presetId, sampleRate] of [
-  ['c4', 48000],
-  ['c5', 44100],
-]) {
-  test(`pipeline (${presetId}, ${sampleRate}Hz): 全曲を譜面どおりに弾くと miss 0・wrong 0・perfect+great ≥ 95%`, (t) => {
-    const preset = makePreset(presetId, 440);
-    for (const song of SONGS) {
-      const { judge, chart, events } = play(song, { sampleRate, preset });
-      const r = judge.result();
-      t.diagnostic(
-        `${presetId}/${sampleRate} ${song.id.padEnd(9)} perfect ${r.counts.perfect} great ${r.counts.great} good ${r.counts.good} miss ${r.counts.miss} wrong ${r.wrong} (ノーツ ${chart.notes.length}, 検出 ${events.length})`,
-      );
-      assert.equal(r.counts.miss, 0, `${song.id}: miss`);
-      assert.equal(r.wrong, 0, `${song.id}: wrong`);
-      assert.equal(events.length, chart.notes.length, `${song.id}: 検出数`);
-      assert.ok((r.counts.perfect + r.counts.great) / chart.notes.length >= 0.95, `${song.id}: perfect+great`);
-    }
+const played = new Map();
+function playCached(song, config) {
+  const key = `${song.id}/${config.preset.id}/${config.sampleRate}`;
+  if (!played.has(key)) played.set(key, play(song, config));
+  return played.get(key);
+}
+
+function assertClean(t, label, song, { judge, chart, events }) {
+  const r = judge.result();
+  const chords = r.chords.total > 0 ? ` 和音 ${r.chords.complete}/${r.chords.total}` : '';
+  t.diagnostic(
+    `${label} ${song.id.padEnd(15)} perfect ${r.counts.perfect} great ${r.counts.great} good ${r.counts.good} miss ${r.counts.miss} wrong ${r.wrong}${chords} (ノーツ ${chart.notes.length}, 検出 ${events.length})`,
+  );
+  assert.equal(r.counts.miss, 0, `${song.id}: miss`);
+  assert.equal(r.wrong, 0, `${song.id}: wrong`);
+  assert.equal(events.length, onsetsOf(chart), `${song.id}: 検出数 (和音は 1 発音)`);
+  assert.equal(r.chords.complete, r.chords.total, `${song.id}: 和音`);
+  assert.ok((r.counts.perfect + r.counts.great) / chart.notes.length >= 0.95, `${song.id}: perfect+great`);
+}
+
+const CONFIGS = [
+  { presetId: 'c4', sampleRate: 48000 },
+  { presetId: 'c5', sampleRate: 44100 },
+  { presetId: 'c4', sampleRate: 192000 },
+];
+
+for (const { presetId, sampleRate } of CONFIGS) {
+  test(`pipeline (${presetId}, ${sampleRate}Hz): 全曲 (和音を含む) を譜面どおりに弾くと miss 0・wrong 0・perfect+great ≥ 95%`, (t) => {
+    const config = { sampleRate, preset: makePreset(presetId, 440) };
+    for (const song of SONGS) assertClean(t, `${presetId}/${sampleRate}`, song, playCached(song, config));
   });
 }
 
-// オーディオ機器によっては AudioContext が 96k や 192k で動く。
-for (const sampleRate of [44100, 96000, 192000]) {
+test('pipeline: 既存の全単音曲では、発音ごとの tines が常に 1 個 (余分な歯が出ない)', (t) => {
+  const single = SONGS.filter((s) => !hasChords(s));
+  assert.ok(single.length >= 10);
+  for (const [presetId, sampleRate] of [['c4', 48000], ['c5', 44100]]) {
+    const config = { sampleRate, preset: makePreset(presetId, 440) };
+    for (const song of single) {
+      const { events, chart } = playCached(song, config);
+      const extra = events.filter((e) => e.tines.length !== 1).length;
+      assert.equal(extra, 0, `${presetId}/${sampleRate} ${song.id}: tines が 1 個でない発音`);
+      events.forEach((e, i) => assert.equal(e.tines[0].degree, chart.notes[i].degree, `${song.id} #${i}`));
+    }
+    t.diagnostic(`${presetId}/${sampleRate}: 単音曲 ${single.length} 曲、全発音で tines 1 個`);
+  }
+});
+
+// オーディオ機器によっては AudioContext が 96k などで動く (192k は上の全曲のテストで見ている)。
+for (const sampleRate of [44100, 96000]) {
   test(`pipeline (c4, ${sampleRate}Hz): 音が重なる曲でも miss 0・wrong 0`, (t) => {
     const preset = makePreset('c4', 440);
     for (const song of SONGS.filter((s) => ['repeat', 'ode', 'jingle', 'brahms'].includes(s.id))) {
-      const { judge, chart, events } = play(song, { sampleRate, preset });
-      const r = judge.result();
-      t.diagnostic(`c4/${sampleRate} ${song.id.padEnd(9)} perfect ${r.counts.perfect} great ${r.counts.great} miss ${r.counts.miss} wrong ${r.wrong}`);
-      assert.equal(r.counts.miss, 0, `${song.id}: miss`);
-      assert.equal(r.wrong, 0, `${song.id}: wrong`);
-      assert.equal(events.length, chart.notes.length, `${song.id}: 検出数`);
-      assert.ok((r.counts.perfect + r.counts.great) / chart.notes.length >= 0.95, `${song.id}: perfect+great`);
+      assertClean(t, `c4/${sampleRate}`, song, play(song, { sampleRate, preset }));
     }
   });
 }
 
-test('pipeline: 度数を 1 ずらした音声 (8 は 7) では全曲で hit 0', (t) => {
+test('pipeline: 度数を 1 ずらした音声 (8 は 7) では全曲 (和音を含む) で hit 0', (t) => {
   const preset = makePreset('c4', 440);
   for (const song of SONGS) {
     const { judge } = play(song, { sampleRate: 48000, preset, shift: 1 });
     const r = judge.result();
-    t.diagnostic(`shift ${song.id.padEnd(9)} hit ${r.total - r.counts.miss} miss ${r.counts.miss} wrong ${r.wrong}`);
+    t.diagnostic(`shift ${song.id.padEnd(15)} hit ${r.total - r.counts.miss} miss ${r.counts.miss} wrong ${r.wrong}`);
     assert.equal(r.counts.perfect + r.counts.great + r.counts.good, 0, `${song.id}: hit`);
     assert.ok(r.wrong > 0, `${song.id}: wrong が出ない`);
   }
@@ -89,6 +122,18 @@ test('pipeline: wait モードでも、正しい音を弾けば全ノーツが�
   const song = SONGS.find((s) => s.id === 'twinkle');
   const { judge } = play(song, { sampleRate: 48000, preset, mode: 'wait' });
   assert.equal(judge.result().counts.great, judge.result().total);
+});
+
+test('pipeline: wait モードでは、和音の歯を 1 回のストラムで弾けば和音ごと当たる', () => {
+  const preset = makePreset('c4', 440);
+  for (const id of ['chords', 'twinkle-chords']) {
+    const song = SONGS.find((s) => s.id === id);
+    const { judge } = play(song, { sampleRate: 48000, preset, mode: 'wait' });
+    const r = judge.result();
+    assert.equal(r.counts.great, r.total, id);
+    assert.equal(r.wrong, 0, id);
+    assert.equal(r.chords.complete, r.chords.total, id);
+  }
 });
 
 test('analyzer: 発音時刻は打鍵時刻の ±15ms 以内で、push の分割に依存しない', () => {

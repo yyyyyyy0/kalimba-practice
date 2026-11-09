@@ -3,6 +3,9 @@
 export const DEGREE_LABELS = ['1', '2', '3', '4', '5', '6', '7', '1̇'];
 export const SOLFEGE = ['ド', 'レ', 'ミ', 'ファ', 'ソ', 'ラ', 'シ', 'ド'];
 
+// 片持ち梁 (歯) の 2 番目の振動モードの、基音に対する周波数比。基音の整数倍にならず、打鍵の直後に強く、約 0.1 秒で消える。
+export const SECOND_MODE_RATIO = 6.27;
+
 const MAJOR_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
 const SOLFEGE_CHROMATIC = ['ド', 'ド♯', 'レ', 'レ♯', 'ミ', 'ファ', 'ファ♯', 'ソ', 'ソ♯', 'ラ', 'ラ♯', 'シ'];
 const EN_CHROMATIC = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];

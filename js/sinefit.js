@@ -92,3 +92,62 @@ export function addSines(coeffs, freqs, sampleRate, startIndex, out, sign = 1) {
     }
   });
 }
+
+// 複数の正弦波の周波数を同時に最小二乗へ寄せる (ガウス・ニュートン法)。
+// 隣り合う歯は 1 本ずつ寄せると互いの漏れに引かれて収束しないので、全員の振幅と周波数のずれを一度に解く。
+// 窓の中心を位相の基準にして、周波数のずれが窓の端で位相のずれとして効くようにする。
+// bounds[i] = [lo, hi] の外へは動かさない。1 回に動かす幅は maxCents 以内。
+export function refineFrequencies(x, freqs, bounds, sampleRate, { iterations = 2, maxCents = 12 } = {}) {
+  const n = x.length;
+  const count = freqs.length;
+  const half = n / 2;
+  const f = Float64Array.from(freqs);
+  const m = count * 3;
+  for (let it = 0; it < iterations; it++) {
+    const coeffs = fitSines(x, -half, f, sampleRate);
+    const cols = new Float64Array(m * n);
+    const resid = Float64Array.from(x);
+    for (let k = 0; k < count; k++) {
+      const w = (2 * Math.PI * f[k]) / sampleRate;
+      const dc = Math.cos(w);
+      const ds = Math.sin(w);
+      let c = Math.cos(-w * half);
+      let s = Math.sin(-w * half);
+      const a = coeffs[2 * k];
+      const b = coeffs[2 * k + 1];
+      const rowC = 3 * k * n;
+      for (let i = 0; i < n; i++) {
+        cols[rowC + i] = c;
+        cols[rowC + n + i] = s;
+        cols[rowC + 2 * n + i] = ((i - half) / half) * (-a * s + b * c);
+        resid[i] -= a * c + b * s;
+        const nc = c * dc - s * ds;
+        s = s * dc + c * ds;
+        c = nc;
+      }
+    }
+    const gram = new Float64Array(m * m);
+    const rhs = new Float64Array(m);
+    for (let p = 0; p < m; p++) {
+      let r = 0;
+      for (let i = 0; i < n; i++) r += cols[p * n + i] * resid[i];
+      rhs[p] = r;
+      for (let q = p; q < m; q++) {
+        let g = 0;
+        for (let i = 0; i < n; i++) g += cols[p * n + i] * cols[q * n + i];
+        gram[p * m + q] = g;
+        gram[q * m + p] = g;
+      }
+    }
+    for (let p = 0; p < m; p++) gram[p * m + p] = gram[p * m + p] * (1 + 1e-6) + 1e-12;
+    const delta = solve(gram, rhs, m);
+    for (let k = 0; k < count; k++) {
+      const dOmega = delta[3 * k + 2] / half;
+      let next = f[k] + (dOmega * sampleRate) / (2 * Math.PI);
+      const step = Math.max(-maxCents, Math.min(maxCents, 1200 * Math.log2(next / f[k])));
+      next = f[k] * 2 ** (step / 1200);
+      f[k] = Math.max(bounds[k][0], Math.min(bounds[k][1], next));
+    }
+  }
+  return f;
+}

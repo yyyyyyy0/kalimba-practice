@@ -1,5 +1,6 @@
 // サンプル列を PluckEvent / TunerReading / レベルへ変換する解析器。
 
+import { detectTines } from './chord.js';
 import { HOP, OnsetDetector, sensitivityToRiseDb } from './onset.js';
 import { detectPitch } from './pitch.js';
 import { addSines, fitSines } from './sinefit.js';
@@ -8,7 +9,7 @@ import { centsBetween, matchTine } from './tuning.js';
 export const DEFAULT_SENSITIVITY = 0.6;
 
 const WINDOW = 2048;
-const RING_SIZE = 8192;
+const RING_SIZE = 16384;
 const MIN_CLARITY = 0.8;
 const MIN_ESTIMATES = 2;
 const ESTIMATE_FROM = 0.025;
@@ -19,6 +20,12 @@ const RING_MEMORY = 8;
 const RING_FIT_SAMPLES = 2048;
 const RING_FIT_GAP = 128;
 const RING_MERGE_CENTS = 30;
+// 和音用の当てはめ窓は発音 + 約 110ms に終わる。ストラムで遅れて鳴る歯も窓に入り、判定の confirmDelay (0.12s) には収まる。
+const CHORD_UNTIL = 0.11;
+const CHORD_MIN_START = 0.02;
+const DEFAULT_TOLERANCE_CENTS = 40;
+const KNOWN_MEMORY = 5;
+const LEARN_WITHIN_DB = 6;
 
 // 窓長などの定数は 44.1k〜48k を前提に決めてある。96k や 192k で動く機器では、
 // そのままだと窓が短すぎて残響の当てはめが効かないので、整数分の 1 に間引いてから解析する。
@@ -98,6 +105,9 @@ export class Analyzer {
     this.rings = [];
     this.hopCount = 0;
     this.recentFreqs = [];
+    this.knownTines = [];
+    // 直近の和音検出の測定値 (残響の振幅、新しい振幅、tonality)。閾値の根拠をテストで読むためのもの。
+    this.lastChord = null;
 
     this.pluckHandlers = new Set();
     this.tunerHandlers = new Set();
@@ -151,7 +161,7 @@ export class Analyzer {
 
     const offset = this.onset.process(hop);
     if (offset >= 0) {
-      this.finalize();
+      this.finalize(hopStart + offset);
       this.pending = this.startPending(hopStart + offset);
     } else if (this.pending) {
       this.collect();
@@ -172,39 +182,108 @@ export class Analyzer {
     const sr = this.sampleRate;
     const start = sample - RING_FIT_GAP - RING_FIT_SAMPLES;
     this.rings = this.rings.filter((r) => sample - r.sample < RING_MEMORY * sr);
-    let ring = null;
-    if (this.rings.length > 0 && start >= 0) {
-      const freqs = this.rings.map((r) => r.freq);
-      const train = new Float32Array(RING_FIT_SAMPLES);
+    let train = null;
+    if (start >= 0) {
+      train = new Float32Array(RING_FIT_SAMPLES);
       for (let i = 0; i < RING_FIT_SAMPLES; i++) train[i] = this.ring[(start + i) % RING_SIZE];
+    }
+    let ring = null;
+    if (this.rings.length > 0 && train) {
+      const freqs = this.rings.map((r) => r.freq);
       ring = { freqs, coeffs: fitSines(train, start, freqs, sr) };
     }
-    return { sample, estimates: [], ring };
+    return { sample, windows: [], ring, pre: train && { samples: train, start } };
   }
 
   collect() {
     const sr = this.sampleRate;
     const delay = this.total - this.pending.sample;
     if (delay >= ESTIMATE_FROM * sr && delay <= ESTIMATE_UNTIL * sr && this.total >= WINDOW) {
-      const win = this.window(this.total);
-      const { ring } = this.pending;
-      if (ring) addSines(ring.coeffs, ring.freqs, sr, this.total - WINDOW, win, -1);
-      const r = detectPitch(win, sr, { neighbor: !ring });
-      if (r && r.clarity >= MIN_CLARITY) this.pending.estimates.push(r);
+      this.pending.windows.push({ samples: Float32Array.from(this.window(this.total)), start: this.total - WINDOW });
     }
-    if (delay + HOP > ESTIMATE_UNTIL * sr) this.finalize();
+    if (delay + HOP > CHORD_UNTIL * sr) this.finalize();
   }
 
-  finalize() {
+  // 単音の音高。窓は集めておくだけにして、和音と判明した発音では YIN を走らせない。
+  // 打ち直された歯 (struck) は前の振動が止まって新しい振動に置き換わるので、その歯の残響は引かない。
+  estimatePitch(p, struck = []) {
+    const sr = this.sampleRate;
+    const estimates = [];
+    let ring = p.ring;
+    if (ring) {
+      const keep = ring.freqs.map((f) => !struck.some((t) => Math.abs(centsBetween(f, t.freq)) <= RING_MERGE_CENTS));
+      ring = {
+        freqs: ring.freqs.filter((_, i) => keep[i]),
+        coeffs: ring.coeffs.filter((_, i) => keep[i >> 1]),
+      };
+      if (ring.freqs.length === 0) ring = null;
+    }
+    for (const { samples, start } of p.windows) {
+      if (ring) addSines(ring.coeffs, ring.freqs, sr, start, samples, -1);
+      const r = detectPitch(samples, sr, { neighbor: !ring });
+      if (r && r.clarity >= MIN_CLARITY) estimates.push(r);
+    }
+    return estimates;
+  }
+
+  // 発音後の窓 (次の発音が先に来たらその手前まで) で 8 本の歯を当てはめ、新しく鳴り始めた歯の組を返す。
+  newTines(p, limit) {
+    const sr = this.sampleRate;
+    const end = Math.min(p.sample + Math.round(CHORD_UNTIL * sr), this.total, limit);
+    const start = end - WINDOW;
+    if (start < p.sample + CHORD_MIN_START * sr || start < this.total - RING_SIZE) return [];
+    const samples = new Float32Array(WINDOW);
+    for (let i = 0; i < WINDOW; i++) samples[i] = this.ring[(start + i) % RING_SIZE];
+    const toleranceCents = this.getMatchOpts().toleranceCents ?? DEFAULT_TOLERANCE_CENTS;
+    const nominal = this.getPreset().freqs;
+    const known = nominal.map((f, k) => (this.knownTines[k]?.nominal === f ? median(this.knownTines[k].freqs) : NaN));
+    const { tines, diagnostic } = detectTines({ pre: p.pre, post: { samples, start }, freqs: nominal, known, sampleRate: sr, toleranceCents });
+    this.lastChord = diagnostic;
+    // 弾かれた歯の周波数を覚え、次からその歯の残響を引くときに使う。1 回の推定は隣の歯の残響に引かれることがあるので、
+    // 直近の中央値を使い、誤検出かもしれない弱い歯 (最大から LEARN_WITHIN_DB より下) は覚えない。
+    const loudest = Math.max(...tines.map((t) => t.level));
+    for (const t of tines) {
+      if (t.level < loudest - LEARN_WITHIN_DB) continue;
+      const k = t.degree - 1;
+      if (this.knownTines[k]?.nominal !== nominal[k]) this.knownTines[k] = { nominal: nominal[k], freqs: [] };
+      this.knownTines[k].freqs.push(t.freq);
+      if (this.knownTines[k].freqs.length > KNOWN_MEMORY) this.knownTines[k].freqs.shift();
+    }
+    return tines;
+  }
+
+  finalize(limit = Infinity) {
     const p = this.pending;
     this.pending = null;
-    if (!p || p.estimates.length < MIN_ESTIMATES) return;
-    const freq = median(p.estimates.map((e) => e.freq));
-    const clarity = median(p.estimates.map((e) => e.clarity));
-    this.remember(freq, p.sample);
-    const match = matchTine(freq, this.getPreset(), this.getMatchOpts());
+    if (!p) return;
+    let tines = this.newTines(p, limit);
+    const estimates = tines.length >= 2 ? [] : this.estimatePitch(p, tines);
+    const hasPitch = estimates.length >= MIN_ESTIMATES;
+    if (!hasPitch && tines.length === 0) return;
+
+    const preset = this.getPreset();
+    const opts = this.getMatchOpts();
+    let freq;
+    let clarity;
+    if (tines.length >= 2 || !hasPitch) {
+      const main = tines.reduce((a, b) => (b.level > a.level ? b : a));
+      freq = main.freq;
+      clarity = 0;
+    } else {
+      freq = median(estimates.map((e) => e.freq));
+      clarity = median(estimates.map((e) => e.clarity));
+    }
+    const match = matchTine(freq, preset, opts);
+    // 当てはめが新しい歯を出さなくても、単音の推定が歯に一致すればその 1 本として渡す。実機の打ち直しが残響と区別できなかったときの保険で、
+    // オクターブ違いを許す設定では、歯の範囲の外の音もここで拾う。
+    if (tines.length === 0 && match) {
+      tines = [{ degree: match.degree, freq, cents: match.cents, level: null }];
+    }
+    if (tines.length >= 2) for (const t of tines) this.remember(t.freq, p.sample);
+    else this.remember(freq, p.sample);
     const event = {
       time: this.timeOf(p.sample),
+      tines,
       freq,
       clarity,
       degree: match ? match.degree : null,
